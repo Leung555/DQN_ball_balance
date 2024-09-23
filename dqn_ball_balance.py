@@ -36,7 +36,7 @@ STATE_SIZE = 2  # Ball position and velocity
 ACTION_SIZE = 3  # Three actions: tilt left, tilt right, stay still
 LEARNING_RATE = 0.001
 GAMMA = 0.99  # Discount factor for future rewards
-BATCH_SIZE = 64
+BATCH_SIZE = 512
 EPSILON = 1.0  # Exploration rate
 EPSILON_MIN = 0.01
 EPSILON_DECAY = 0.9999
@@ -109,12 +109,15 @@ def compute_reward(ball_pos, ball_vel):
 
     # Penalize distance from the center
     position_penalty = alpha * abs(Target_Distance - ball_pos)**2
+    if abs(Target_Distance - ball_pos) < 0.5:
+        position_penalty = 0
 
     # Velocity penalty that depends on how far the ball is from the center
-    velocity_penalty = beta * abs(ball_vel)**2 # / (1 + abs(ball_pos))
+    # velocity_penalty = beta * abs(ball_vel)**2 / (1 + abs(Target_Distance - ball_pos))
 
     # Combined reward
-    reward = - position_penalty - velocity_penalty
+    reward = - position_penalty# - velocity_penalty
+
     return reward
 
 def plot_rewards(rewards):
@@ -132,7 +135,7 @@ def dqn_train_loop():
 
     # Initialize plot
     plt.ion()  # Interactive mode on for dynamic plotting
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(4, 3))
     ax.set_xlabel('Episode')
     ax.set_ylabel('Total Reward')
     ax.set_title('Total Reward per Episode during Training')
@@ -269,6 +272,7 @@ if __name__ == "__main__":
     # Setup Remote Client for Coppeliasim connection
     client = RemoteAPIClient()
     sim = client.require('sim')
-    sim.loadScene(sim.getStringParam(sim.stringparam_scenedefaultdir) + '/Dqn_Ball_balance.ttt')
+    # sim.loadScene(sim.getStringParam(sim.stringparam_scenedefaultdir) + '/Dqn_Ball_balance.ttt')
+    sim.loadScene("C:/Users/binggwong/Documents/GitHub/DQN_ball_balance" + '/Dqn_Ball_balance.ttt')
 
     dqn_train_loop()
