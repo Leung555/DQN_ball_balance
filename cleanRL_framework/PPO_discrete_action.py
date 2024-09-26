@@ -99,8 +99,8 @@ class CoppeliaSimEnv(gym.Env):
         self.joint_handle = self.sim.getObject(":/Revolute_joint")
 
         # Define action and observation space
-        self.action_space = spaces.Discrete(3)  # 0: tilt left, 1: tilt right, 2: stay still
-        self.observation_space = spaces.Box(low=np.array([-50, -10]), high=np.array([50, 10]), dtype=np.float32)
+        self.action_space = gym.spaces.Discrete(3)  # 0: tilt left, 1: tilt right, 2: stay still
+        self.observation_space = gym.spaces.Box(low=np.array([-50, -10]), high=np.array([50, 10]), dtype=np.float32)
 
         self.single_action_space = self.action_space
         self.single_observation_space = self.observation_space
@@ -170,15 +170,15 @@ class CoppeliaSimEnv(gym.Env):
         beta = 1.0   # Weight for velocity penalty
 
         # Penalize distance from the center
-        position_penalty = alpha * abs(Target_Distance - ball_pos)
-        if abs(Target_Distance - ball_pos) < 0.2:
-            position_penalty = 0
+        position_penalty = alpha * abs(Target_Distance - ball_pos)**2
+        # if abs(Target_Distance - ball_pos) < 0.2:
+        #     position_penalty = 0
 
         # Velocity penalty that depends on how far the ball is from the center
         # velocity_penalty = beta * abs(ball_vel)**2
 
         # Combined reward
-        reward = - position_penalty# - velocity_penalty
+        reward = - position_penalty # - velocity_penalty
 
         return reward
 
@@ -287,7 +287,7 @@ if __name__ == "__main__":
     print("envs.observation_space: ", envs.observation_space)
     print("envs.single_observation_space: ", envs.single_observation_space)
     
-    # assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
 
 
@@ -311,6 +311,7 @@ if __name__ == "__main__":
     next_done = torch.zeros(args.num_envs).to(device)
 
     for iteration in range(1, args.num_iterations + 1):
+        print(f"iteration: {iteration}")
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
