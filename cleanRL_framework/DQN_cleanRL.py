@@ -85,7 +85,7 @@ class CoppeliaSimEnv(gym.Env):
         self.sim = self.client.require('sim')
 
         # Load the scene
-        self.sim.loadScene('C:/Users/binggwong/Documents/GitHub/DQN_ball_balance/Dqn_Ball_balance.ttt')
+        self.sim.loadScene('C:/Users/binggwong/Documents/GitHub/DQN_ball_balance/scenes/Dqn_Ball_balance.ttt')
 
         # Get object handles
         self.ir_sensor_handle = self.sim.getObject(":/Proximity_sensor")
@@ -302,7 +302,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             q_values = q_network(torch.Tensor(obs).to(device))
-            print("q_values: ", q_values)
+            # print("q_values: ", q_values)
             # actions = torch.argmax(q_values, dim=1).cpu().numpy()
             actions = torch.argmax(q_values).cpu().numpy()
 
