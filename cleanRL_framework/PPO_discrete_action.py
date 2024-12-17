@@ -92,7 +92,8 @@ class CoppeliaSimEnv(gym.Env):
         self.sim = self.client.require('sim')
 
         # Load the scene
-        self.sim.loadScene('C:/Users/binggwong/Documents/GitHub/DQN_ball_balance/Dqn_Ball_balance.ttt')
+        # self.sim.loadScene('C:/Users/binggwong/Documents/GitHub/DQN_ball_balance/Dqn_Ball_balance.ttt') # Window
+        self.sim.loadScene('/home/binggwong/git/DQN_ball_balance/scenes/Dqn_Ball_balance.ttt') # Ubuntu
 
         # Get object handles
         self.ir_sensor_handle = self.sim.getObject(":/Proximity_sensor")

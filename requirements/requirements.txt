@@ -1,0 +1,9 @@
+gymnasium==0.28.1 ; python_version >= "3.8"
+torch==1.12.1 ; python_version >= "3.8"
+tyro==0.5.10 ; python_version >= "3.8"
+stable-baselines3==2.0.0 ; python_version >= "3.8" and python_version < "3.11"
+tensorboard-data-server==0.6.1 ; python_version >= "3.8" and python_version < "3.11"
+tensorboard-plugin-wit==1.8.1 ; python_version >= "3.8" and python_version < "3.11"
+tensorboard==2.11.2 ; python_version >= "3.8" and python_version < "3.11"
+
+coppeliasim-zmqremoteapi-client
