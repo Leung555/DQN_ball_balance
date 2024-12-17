@@ -21,12 +21,14 @@ The simulation is conducted using CoppeliaSim (formerly V-REP), which allows for
 
 ### Prerequisites
 
-- CoppeliaSim installed with appropriate scene file for the ball balance task.
+- CoppeliaSim installed with appropriate scene file for the ball balance task. `before running the code please open the Coppeliasim Simulation`
 - Python 3.8-3.11, of currently you are not using python version 3.8-3.11, you can use `pyenv` to install a new python version and create an isolated virtual environment.
-- dependencies installation similar to `cleanRL repository` [link](https://github.com/vwxyzjn/cleanrl/tree/master?tab=readme-ov-file) It Required libraries: `gymnasium`, `torch`, `numpy`, `tyro`, `coppeliasim_zmqremoteapi_client`, and `torch.utils.tensorboard`
+- dependencies installation similar to `cleanRL repository` [link](https://github.com/vwxyzjn/cleanrl/tree/master?tab=readme-ov-file). It Required libraries: `gymnasium`, `torch`, `numpy`, `tyro`, `coppeliasim_zmqremoteapi_client`, and `torch.utils.tensorboard`
     ```
     git clone https://github.com/Leung555/DQN_ball_balance.git && cd DQN_ball_balance
     poetry install
+
+    # before running the code please open the Coppeliasim Simulation
 
     # alternatively, you could use `poetry shell` and do
     # `python run cleanRL_framework/PPO_discrete_action.py`
