@@ -41,7 +41,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "Hangbot-Cylinder-v1"
+    env_id: str = "Hex-4l"
     """the id of the environment"""
     total_timesteps: int = 500000
     """total timesteps of the experiments"""
@@ -94,51 +94,46 @@ class CoppeliaSimEnv(gym.Env):
 
         # Load the scene
         # self.sim.loadScene('C:/Users/binggwong/Documents/GitHub/DQN_ball_balance/Dqn_Ball_balance.ttt') # Window
-        self.sim.loadScene('/home/binggwong/git/DQN_ball_balance/scenes/Hangbot_cy_2D.ttt') # Ubuntu
+        # self.sim.loadScene('/home/binggwong/git/DQN_ball_balance/scenes/Hangbot_cy_2D.ttt') # Ubuntu
+        self.sim.loadScene('/home/binggwong/git/DQN_ball_balance/scenes/SOLMbot_hex_4l_clean.ttt') # Ubuntu
 
-        # Get object handles
-        self.magnet_sensor_1_handle = self.sim.getObject(":/sensor_m1")
-        self.magnet_sensor_2_handle = self.sim.getObject(":/sensor_m2")
-        self.magnet1State = true
-        self.magnet2State = true
+        # --- CHANGE HERE for legged robot ---
+        # Get handles for all 12 joints (3 per leg × 4 legs)
+        joint_names = [
+            "R1_J1", "R1_J2", "R1_J3",
+            "R2_J1", "R2_J2", "R2_J3",
+            "L1_J1", "L1_J2", "L1_J3",
+            "L2_J1", "L2_J2", "L2_J3"
+        ]
+        self.jointHandles = [self.sim.getObject(f":/{name}") for name in joint_names]
 
+        FR_foot_sensor=self.sim.getObject(":/R1_foot_sensor")
+        FL_foot_sensor=self.sim.getObject(":/L1_foot_sensor")
+        RR_foot_sensor=self.sim.getObject(":/R2_foot_sensor")
+        RL_foot_sensor=self.sim.getObject(":/L2_foot_sensor")
+        self.foot_sensor_array = { FR_foot_sensor, RR_foot_sensor, FL_foot_sensor, RL_foot_sensor }
 
-        self.jointHandles = []
-        for i in range(1, 7):
-            self.jointHandles.append(self.sim.getObject(f":/J{i}"))
+        self.body = self.sim.getObject(':/Body')
+        # -------------------------------------
 
-        # Curvature Control
-        self.Curv = 0.0
-        # linear function parameters (y= slope * Curv + const)
-        self.slope = 1.0
-        self.const = 0
+        # --- CHANGE HERE for legged robot ---
+        # Action space: 12 continuous actions (normalized to [-1, 1])
+        self.action_space = gym.spaces.Box(low=-0.5, high=0.5, shape=(12,), dtype=np.float32)
+        # -------------------------------------
 
-        # body handle
-        self.robot_handle = self.sim.getObject(":/Cylinder")
-        self.m2_position = [0,0,0]
-
-
-        # Define action and observation space
-        # Action space: 1 continuous + 2 discrete (each discrete: 0 or 1)
-        self.action_space = gym.spaces.Dict({
-            'continuous': gym.spaces.Box(low=np.array([-1.0]), high=np.array([1.0]), dtype=np.float32),
-            # 'discrete_1': gym.spaces.Discrete(2),
-            # 'discrete_2': gym.spaces.Discrete(2),
-        })
-        # Observation space: [curvature, linearVelocity(x, y, z), angularVelocity(x, y, z)]
-        self.observation_space = gym.spaces.Box(
-            low=np.array([-1.0, 0.0, 0.0, 0.0, 0.0, 
-                          -10.0, -10.0, -10.0, 
-                          -10.0, -10.0, -10.0, 
-                          -10.0, -10.0, -10.0]),
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 
-                           10.0, 10.0, 10.0, 
-                           10.0, 10.0, 10.0, 
-                           10.0, 10.0, 10.0]),
-            dtype=np.float32
+        # --- CHANGE HERE for legged robot ---
+        # Observation space: orientation (3), joint positions (12), joint velocities (12), foot contacts (4)
+        obs_low = np.array(
+            [-np.pi]*3 + [-np.pi]*12 + [-10.0]*12 + [0]*4
         )
+        obs_high = np.array(
+            [np.pi]*3 + [np.pi]*12 + [10.0]*12 + [2]*4
+        )
+        self.observation_space = gym.spaces.Box(low=obs_low, high=obs_high, dtype=np.float32)
+        # -------------------------------------
 
         self.single_action_space = self.action_space
+        print("Single action space:", self.single_action_space)
         self.single_observation_space = self.observation_space
 
         # Set initial values for simulation state
@@ -148,21 +143,18 @@ class CoppeliaSimEnv(gym.Env):
         self.dt = self.sim.getSimulationTimeStep()
 
         # Define state
-        self.num_states = 14  # [ball_position, ball_velocity, linearVelocity(x, y, z), angularVelocity(x, y, z)]
-        self.state = np.zeros(self.num_states)  # [ball_position, ball_velocity]
+        self.num_states = 31  # 3+12+12+4
+        self.state = np.zeros(self.num_states)
         self.done = False
 
     def reset(self, seed=None):
-        # Reset the simulation and state
         print("Resetting the environment...")
-        # self.sim.stop(self.robot_handle)
-
         if seed is not None:
-            np.random.seed(seed)        
+            np.random.seed(seed)
         self.sim.stopSimulation()
-        self.sim.setStepping(True)
-        # while self.sim.getSimulationState()!= self.sim.simulation_stopped:
-        #     pass        
+        while self.sim.getSimulationState()!= self.sim.simulation_stopped:
+            time.sleep(1)
+            break
         self.sim.startSimulation()
         self.sim.step()
         self.state = np.zeros(self.num_states)
@@ -170,124 +162,101 @@ class CoppeliaSimEnv(gym.Env):
         return self.state
 
     def step(self, action):
-        # Take action: map action to platform tilting
-        # Action is now a dict with 'continuous', 'discrete_1', 'discrete_2'
-
-        self.robot_pos = self.sim.getObjectPosition(self.robot_handle, -1)
-        self.robot_orien = self.sim.getObjectOrientation(self.robot_handle, -1)
-        self.m2_position = self.sim.getObjectPosition(self.magnet_sensor_2_handle, -1)
-        # print("m2_position: ", self.m2_position)
-        linearVelocity, angularVelocity = self.sim.getObjectVelocity(self.robot_handle)
-        # print(linearVelocity, angularVelocity)
-
-        getData_magnet_1 = self.sim.getStringSignal('magnet1_detect')  # Retrieve the string signal
-        if getData_magnet_1 == 'true':
-            magnet1_detect = True
-        elif getData_magnet_1 == 'false':
-            magnet1_detect = False
-        else:
-            magnet1_detect = None  # or handle as needed
-
-        getData_magnet_2 = self.sim.getStringSignal('magnet2_detect')  # Retrieve the string signal
-        # print('getData_magnet_2: ', getData_magnet_2)
-        if getData_magnet_2 == 'true':
-            magnet2_detect = True
-        elif getData_magnet_2 == 'false':
-            magnet2_detect = False
-        else:
-            magnet2_detect = None  # or handle as needed
-
-
-        # Curvature Control
-        # print("Action: ", action)
-        # Handle both tensor and numpy array formats
-        if isinstance(action['continuous'], np.ndarray):
-            self.Curv = float(action['continuous'][0] if len(action['continuous'].shape) > 0 else action['continuous'])
-        else:
-            self.Curv = float(action['continuous'])
-            
-        self.magnet1State = False #bool(action['discrete_1'])  # Discrete action for magnet 1
-        self.magnet2State = False #bool(action['discrete_2'])  # Discrete action for magnet 2
-        
-        target_jointPos = self.slope * self.Curv + self.const
-
-        # Step simulation
+        # # Accept both dict and flat array for backward compatibility
+        # if isinstance(action, dict) and 'continuous' in action:
+        #     action_vec = np.asarray(action['continuous']).flatten()
+        # else:
+        #     action_vec = np.asarray(action).flatten()
+        # # Set each joint's target position from action vector (assume action in [-1, 1])
+        # print("action:", action['continuous'])
+        for i, joint_handle in enumerate(self.jointHandles):
+            self.sim.setJointTargetPosition(joint_handle, float(action['continuous'][i]))
         self.sim.step()
+        obs = self._get_obs()
+        reward = self.compute_reward(obs)
+        done = self._check_termination(obs)
+        info = {}
+        self.state = obs
+        return obs, reward, np.array([done]), np.array([False]), info
 
-        # Set joint positions
-        for i in range(6):
-            self.sim.setJointTargetPosition(self.jointHandles[i], target_jointPos)
-        
-        # magnetic control
-        if self.magnet1State:
-            self.sim.setStringSignal('magnet1State', 'true')  # Send string data
-        else:
-            self.sim.setStringSignal('magnet1State', 'false')  # Send string data
-        
-        if self.magnet2State:
-            self.sim.setStringSignal('magnet2State', 'true')  # Send string data
-        else:
-            self.sim.setStringSignal('magnet2State', 'false')  # Send string data
+    def _get_obs(self):
+        # --- CHANGE HERE for legged robot ---
+        # Collect orientation, joint positions, velocities, and foot contacts
+        orientation = self.sim.getObjectOrientation(self.body, -1)
+        joint_positions = [self.sim.getJointPosition(j) for j in self.jointHandles]
+        joint_velocities = [self.sim.getJointVelocity(j) for j in self.jointHandles]
+        # Compute resultant force magnitude from all foot sensors
+        resultant_force = [0.0]*4
+        for i, sensor_handle in enumerate(self.foot_sensor_array):
+            result, force, torque = self.sim.readForceSensor(sensor_handle)
+            if result:  # result==1 means valid reading
+                force_magnitude = np.linalg.norm(force)/10.0
+                resultant_force[i] = force_magnitude
+        # print("Resultant force from all foot sensors:", resultant_force)
 
-        # magnet sensor reading
-        magnet2_detect = False
-        received_magnet2_Data = self.sim.getStringSignal('magnet2_detect')
-        if received_magnet2_Data == 'true':
-            magnet2_detect = True
-        elif received_magnet2_Data == 'false':
-            magnet2_detect = False
-        # print("magnet2_detect: ", magnet2_detect)
+        obs = np.array(list(orientation) + joint_positions + joint_velocities + resultant_force)
+        # print("obs:", obs)
+        return obs
+        # -------------------------------------
 
-        # Get new state from sensor data
-        next_state = np.array([action['continuous'][0], self.magnet1State, self.magnet2State,  # Use the continuous action as the first state variable
-                               magnet1_detect, magnet2_detect,
-                               self.robot_orien[0], self.robot_orien[1], self.robot_orien[2],
-                               linearVelocity[0], linearVelocity[1], linearVelocity[2],
-                               angularVelocity[0], angularVelocity[1], angularVelocity[2]])
-
-        # Calculate reward
-        reward = self.compute_reward(next_state)
-
-        # Check if the episode is done
-        done = abs(self.robot_pos[2]) < 0.55  # Done if the ball goes out of bounds
-        terminations = np.array([done])  # Termination condition
-        print("terminations: ", terminations)
-        truncations = np.array([False])  # Set to True if you have specific truncation logic
-        infos = {}  # You can add any additional information here
-
-        # Update the state
-        self.state = next_state
-
-        return next_state, reward, terminations, truncations, infos
-
-    def compute_reward(self, state):
-        # Penalize the ball being far from the center
-        # ball_pos, ball_vel = state
-
-        # Reaching target position Reward for magnet 2
-        # target_fw = 0.022
-        # target_z = 0.756
-        # y_diff = target_fw - self.m2_position[1]
-        # z_diff = target_z - self.m2_position[2]
-        # reward = - (y_diff ** 2 + z_diff ** 2)  # Reward is negative distance from target position
-
-        Target_Distance = 0.1
-        y_diff = Target_Distance - self.robot_pos[1]
-
-        reward = - (y_diff ** 2)  # Reward is negative distance from target position
+    def compute_reward(self, obs):
+        # --- CHANGE HERE for legged robot ---
+        # Example reward: encourage forward movement, penalize energy, encourage stability, foot contact
+        # You should design this for your specific task
+        # Reward for forward walking: encourage positive forward velocity (x-direction)
+        reward = 0.0
+        # Assume the robot's body linear velocity in x is available as part of observation (if not, you may need to add it)
+        # Here, as a placeholder, use the orientation's pitch (obs[1]) as a proxy for forward movement
+        # In practice, you should use the actual forward velocity from simulation
+        # Extract linear velocity of the body in the x-axis from CoppeliaSim
+        # Get the absolute linear and angular velocity of the body
+        abs_lin_vel, abs_ang_vel = self.sim.getObjectVelocity(self.body)
+        # Get the orientation quaternion of the body in world frame
+        q = self.sim.getObjectQuaternion(self.body, -1)  # [x, y, z, w]
+        # Compute the inverse quaternion
+        q_inv = [-q[0], -q[1], -q[2], q[3]]
+        # Rotate the velocities into the local frame using quaternion multiplication
+        # CoppeliaSim's multiplyVector expects (quaternion, vector)
+        local_lin_vel = self.sim.multiplyVector(q_inv, abs_lin_vel)
+        local_ang_vel = self.sim.multiplyVector(q_inv, abs_ang_vel)
 
 
+        linear_velocity, _ = self.sim.getObjectVelocity(self.body)
+        forward_bonus = local_lin_vel[0]  # x-axis linear velocity
+        reward += forward_bonus
+        # print("forward_bonus:", forward_bonus)
+
+        # Small penalty for large joint movements (energy penalty)
+        # reward -= np.sum(np.square(obs[3:15])) * 0.001
+
+        # Encourage feet to touch the ground (contact sensors)
+        # reward += sum(obs[-4:]) * 0.1
+
+        # Penalize if robot falls
+        # if self._check_termination(obs):
+        #     reward -= 100
+        # Example: reward += obs[0]  # forward orientation (placeholder)
+        # reward -= np.sum(np.square(obs[3:15])) * 0.001  # penalize joint positions (placeholder)
+        # reward += sum(obs[-4:]) * 0.1  # encourage feet to touch ground (placeholder)
+        # if self._check_termination(obs):
+        #     reward -= 100
         return reward
+        # -------------------------------------
 
-    def read_magenet_sensor(self):
-        # Read proximity sensor data
-        res, dist, _, _, _ = self.sim.readProximitySensor(self.ir_sensor_handle)
-        if res > 0:
-            return dist * 10  # Convert distance to decimeters
-        return 0
-
-    def render(self, mode='human'):
-        pass  # Rendering can be handled in CoppeliaSim's GUI
+    def _check_termination(self, obs):
+        # --- CHANGE HERE for legged robot ---
+        # Example: terminate if robot falls (orientation too large)
+        roll, pitch, yaw = obs[0], obs[1], obs[2]
+        # Get the robot's position in the world frame
+        position = self.sim.getObjectPosition(self.body, -1)
+        x, y = position[0], position[1]
+        # print(f"Termination check: roll={roll}, pitch={pitch}, yaw={yaw}, x={x}, y={y}")
+        if abs(roll) > 1.5 or abs(pitch) > 1.5:
+            return True
+        if abs(x) > 1.8 or abs(y) > 1.8:
+            return True
+        return False
+        # -------------------------------------
 
     def close(self):
         self.sim.stopSimulation()
@@ -319,20 +288,21 @@ class Agent(nn.Module):
         
         # Shared feature extractor
         self.shared_net = nn.Sequential(
-            layer_init(nn.Linear(obs_shape, 64)),
+            layer_init(nn.Linear(obs_shape, 32)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
+            layer_init(nn.Linear(32, 16)),
             nn.Tanh(),
         )
         
         # Critic (value function)
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(64, 1), std=1.0),
+            layer_init(nn.Linear(16, 1), std=1.0),
         )
-        
-        # Actor head for continuous action only (for curvature)
-        self.actor_continuous_mean = layer_init(nn.Linear(64, 1), std=0.01)
-        self.actor_continuous_logstd = nn.Parameter(torch.zeros(1))
+
+        # Actor head for continuous action (12-DoF)
+        self.action_dim = envs.single_action_space.shape[0]
+        self.actor_continuous_mean = layer_init(nn.Linear(16, self.action_dim), std=0.01)
+        self.actor_continuous_logstd = nn.Parameter(torch.zeros(self.action_dim))
 
     def get_value(self, x):
         features = self.shared_net(x)
@@ -340,28 +310,22 @@ class Agent(nn.Module):
 
     def get_action_and_value(self, x, action=None):
         features = self.shared_net(x)
-        
-        # Continuous action (curvature)
+        # Continuous action (12-DoF)
         continuous_mean = self.actor_continuous_mean(features)
         continuous_std = torch.exp(self.actor_continuous_logstd)
         continuous_dist = torch.distributions.Normal(continuous_mean, continuous_std)
-        
         if action is None:
             # Sample actions
             continuous_action = continuous_dist.sample()
-            
             action = {
                 'continuous': continuous_action,
             }
         else:
             continuous_action = action['continuous']
-        
         # Calculate log probabilities
         continuous_log_prob = continuous_dist.log_prob(continuous_action).sum(axis=-1)
-        
         # Calculate entropy
         continuous_entropy = continuous_dist.entropy().sum(axis=-1)
-        
         return action, continuous_log_prob, continuous_entropy, self.critic(features)
 
 
@@ -418,7 +382,7 @@ if __name__ == "__main__":
     # ALGO Logic: Storage setup
     obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
     # Store actions as separate tensors for each component
-    actions_continuous = torch.zeros((args.num_steps, args.num_envs, 1)).to(device)
+    actions_continuous = torch.zeros((args.num_steps, args.num_envs, 12)).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -428,7 +392,7 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     next_obs = envs.reset(seed=args.seed)
-    print("next_obs: ", next_obs)
+    # print("next_obs: ", next_obs)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
 
@@ -460,11 +424,16 @@ if __name__ == "__main__":
             
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action_numpy)
-            # if terminations is True:
-            #     print("Terminations: ", terminations)
+            if terminations[0]:
+                print("Terminations: ", terminations)
+                next_obs = envs.reset(seed=args.seed)
+                print("next_obs after reset: ", next_obs)
             next_done = np.logical_or(terminations, truncations).astype(bool)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.tensor(next_done, dtype=torch.bool).to(device)
+            # --- FIX: ensure next_obs is a float32 numpy array ---
+            next_obs = np.asarray(next_obs, dtype=np.float32)
+            next_obs = torch.Tensor(next_obs).to(device)
+            next_done = torch.tensor(next_done, dtype=torch.bool).to(device)
 
             if "final_info" in infos:
                 for info in infos["final_info"]:
@@ -480,7 +449,7 @@ if __name__ == "__main__":
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
-                    nextnonterminal = 1.0 - next_done
+                    nextnonterminal = 1.0 - next_done.float()
                     nextvalues = next_value
                 else:
                     nextnonterminal = 1.0 - dones[t + 1]

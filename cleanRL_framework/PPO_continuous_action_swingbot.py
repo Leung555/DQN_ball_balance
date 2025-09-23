@@ -94,7 +94,8 @@ class CoppeliaSimEnv(gym.Env):
 
         # Load the scene
         # self.sim.loadScene('C:/Users/binggwong/Documents/GitHub/DQN_ball_balance/Dqn_Ball_balance.ttt') # Window
-        self.sim.loadScene('/home/binggwong/git/DQN_ball_balance/scenes/Hangbot_cy_2D.ttt') # Ubuntu
+        # self.sim.loadScene('/home/binggwong/git/DQN_ball_balance/scenes/Hangbot_cy_2D.ttt') # Ubuntu
+        self.sim.loadScene('/home/binggwong/git/DQN_ball_balance/scenes/SOLMbot_hex_4l_clean.ttt') # Ubuntu
 
         # Get object handles
         self.magnet_sensor_1_handle = self.sim.getObject(":/sensor_m1")
@@ -116,6 +117,17 @@ class CoppeliaSimEnv(gym.Env):
         # body handle
         self.robot_handle = self.sim.getObject(":/Cylinder")
         self.m2_position = [0,0,0]
+        self.robot_state = 0  # 0: magnet1, 1: magnet2
+        # Initialize counters if they don't exist
+        # if not hasattr(self, 'cd_m1'):
+        self.cd_m1 = 0
+        self.cd_m2 = 40
+        self.magnet_counter = 0
+        self.attach_step = 10  # Define attach step threshold
+        self.transition_counter = 0 # Transition counter for state machine
+        self.transition_step = 10
+        self.magnet1_detect = True
+        self.magnet2_detect = False
 
 
         # Define action and observation space
@@ -127,14 +139,14 @@ class CoppeliaSimEnv(gym.Env):
         })
         # Observation space: [curvature, linearVelocity(x, y, z), angularVelocity(x, y, z)]
         self.observation_space = gym.spaces.Box(
-            low=np.array([-1.0, 0.0, 0.0, 0.0, 0.0, 
-                          -10.0, -10.0, -10.0, 
-                          -10.0, -10.0, -10.0, 
-                          -10.0, -10.0, -10.0]),
+            low=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, 
+                          -5.0, -5.0, -5.0, 
+                          -1.0, -1.0, 
+                          ]),
             high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 
-                           10.0, 10.0, 10.0, 
-                           10.0, 10.0, 10.0, 
-                           10.0, 10.0, 10.0]),
+                           5.0, 5.0, 5.0, 
+                           1.0, 1.0, 
+                           ]),
             dtype=np.float32
         )
 
@@ -148,7 +160,7 @@ class CoppeliaSimEnv(gym.Env):
         self.dt = self.sim.getSimulationTimeStep()
 
         # Define state
-        self.num_states = 14  # [ball_position, ball_velocity, linearVelocity(x, y, z), angularVelocity(x, y, z)]
+        self.num_states = 10  # [ball_position, ball_velocity, linearVelocity(x, y, z), angularVelocity(x, y, z)]
         self.state = np.zeros(self.num_states)  # [ball_position, ball_velocity]
         self.done = False
 
@@ -157,14 +169,27 @@ class CoppeliaSimEnv(gym.Env):
         print("Resetting the environment...")
         # self.sim.stop(self.robot_handle)
 
+        # reset the robot state machine
+        self.robot_state = 0  # Reset to initial state
+        self.cd_m1 = 0
+        self.cd_m2 = 40
+        self.magnet_counter = 0
+        self.magnet1State = True
+        self.magnet2State = False
+        self.magnet1_detect = False
+        self.magnet2_detect = False
+        self.terminated = False
+
+
         if seed is not None:
             np.random.seed(seed)        
+        # self.sim.setStepping(True)
         self.sim.stopSimulation()
-        self.sim.setStepping(True)
-        # while self.sim.getSimulationState()!= self.sim.simulation_stopped:
-        #     pass        
+        while self.sim.getSimulationState()!= self.sim.simulation_stopped:
+            time.sleep(1)
+            break        
         self.sim.startSimulation()
-        self.sim.step()
+        # self.sim.step()
         self.state = np.zeros(self.num_states)
         self.done = False
         return self.state
@@ -176,27 +201,82 @@ class CoppeliaSimEnv(gym.Env):
         self.robot_pos = self.sim.getObjectPosition(self.robot_handle, -1)
         self.robot_orien = self.sim.getObjectOrientation(self.robot_handle, -1)
         self.m2_position = self.sim.getObjectPosition(self.magnet_sensor_2_handle, -1)
+        self.m1_position = self.sim.getObjectPosition(self.magnet_sensor_1_handle, -1)
+        m1_y = self.m1_position[1]
+        m2_y = self.m2_position[1]
+        m1_z = self.m1_position[2]
+        m2_z = self.m2_position[2]
         # print("m2_position: ", self.m2_position)
         linearVelocity, angularVelocity = self.sim.getObjectVelocity(self.robot_handle)
         # print(linearVelocity, angularVelocity)
 
         getData_magnet_1 = self.sim.getStringSignal('magnet1_detect')  # Retrieve the string signal
         if getData_magnet_1 == 'true':
-            magnet1_detect = True
+            self.magnet1_detect = True
         elif getData_magnet_1 == 'false':
-            magnet1_detect = False
-        else:
-            magnet1_detect = None  # or handle as needed
+            self.magnet1_detect = False
+
 
         getData_magnet_2 = self.sim.getStringSignal('magnet2_detect')  # Retrieve the string signal
         # print('getData_magnet_2: ', getData_magnet_2)
         if getData_magnet_2 == 'true':
-            magnet2_detect = True
+            self.magnet2_detect = True
         elif getData_magnet_2 == 'false':
-            magnet2_detect = False
-        else:
-            magnet2_detect = None  # or handle as needed
+            self.magnet2_detect = False
 
+        # print('magnet1_detect: ', magnet1_detect)
+        # print('magnet2_detect: ', magnet2_detect)
+
+        # Robot state machine for magnet control
+        if self.robot_state == 0:
+            # Calculate distance between m1 and m2 on y axis and z axis separately
+            y_distance = m2_y - m1_y
+            z_distance = m2_z - m1_z
+            # print(f"Y axis distance: {y_distance:.4f}, Z axis distance: {z_distance:.4f} between m1 and m2")
+            if self.transition_counter < self.transition_step:
+                self.magnet1State = True
+                self.magnet2State = False   
+                self.transition_counter = self.transition_counter + 1
+                self.cd_m2 = 0
+                # print('Transitioning state 0000: ', self.transition_counter)
+            else:
+                self.cd_m2 = self.cd_m2 + 1
+                # print('robot_state: ', self.robot_state)
+                self.magnet1State = True
+                self.magnet2State = True
+                if self.magnet2_detect and y_distance < 0:
+                    self.magnet1State = True
+                    self.magnet2State = False
+                elif self.magnet2_detect and self.cd_m2 > 30:
+                    # print('magnet2_detect!!!!!!!!!!!!!!!!!!')
+                    self.magnet_counter = self.magnet_counter + 1
+                if self.magnet_counter > self.attach_step:
+                    self.robot_state = 1
+                    self.magnet_counter = 0
+                    self.transition_counter = 0
+        elif self.robot_state == 1:
+            y_distance = m1_y - m2_y
+            z_distance = m1_z - m2_z
+            # print(f"Y axis distance: {y_distance:.4f}, Z axis distance: {z_distance:.4f} between m1 and m2")
+            if self.transition_counter < self.transition_step:
+                self.magnet1State = False
+                self.magnet2State = True
+                self.transition_counter = self.transition_counter + 1
+                self.cd_m1 = 0
+                # print('Transitioning state 1111: ', self.transition_counter)
+            else:
+                self.magnet1State = True
+                self.magnet2State = True   
+                self.cd_m1 = self.cd_m1 + 1
+                if self.magnet1_detect and y_distance < 0:
+                    self.magnet1State = False
+                    self.magnet2State = True
+                elif self.magnet1_detect and self.cd_m1 > 30:
+                    self.magnet_counter = self.magnet_counter + 1
+                if self.magnet_counter > self.attach_step:
+                    self.robot_state = 0
+                    self.magnet_counter = 0
+                    self.transition_counter = 0
 
         # Curvature Control
         # print("Action: ", action)
@@ -205,9 +285,10 @@ class CoppeliaSimEnv(gym.Env):
             self.Curv = float(action['continuous'][0] if len(action['continuous'].shape) > 0 else action['continuous'])
         else:
             self.Curv = float(action['continuous'])
-            
-        self.magnet1State = False #bool(action['discrete_1'])  # Discrete action for magnet 1
-        self.magnet2State = False #bool(action['discrete_2'])  # Discrete action for magnet 2
+        # print("Curvature: ", self.Curv)
+        
+        # Note: magnet states are now controlled by the robot state machine above
+        # self.magnet1State and self.magnet2State are set in the state machine
         
         target_jointPos = self.slope * self.Curv + self.const
 
@@ -229,29 +310,40 @@ class CoppeliaSimEnv(gym.Env):
         else:
             self.sim.setStringSignal('magnet2State', 'false')  # Send string data
 
-        # magnet sensor reading
-        magnet2_detect = False
-        received_magnet2_Data = self.sim.getStringSignal('magnet2_detect')
-        if received_magnet2_Data == 'true':
-            magnet2_detect = True
-        elif received_magnet2_Data == 'false':
-            magnet2_detect = False
-        # print("magnet2_detect: ", magnet2_detect)
-
         # Get new state from sensor data
-        next_state = np.array([action['continuous'][0], self.magnet1State, self.magnet2State,  # Use the continuous action as the first state variable
-                               magnet1_detect, magnet2_detect,
-                               self.robot_orien[0], self.robot_orien[1], self.robot_orien[2],
-                               linearVelocity[0], linearVelocity[1], linearVelocity[2],
-                               angularVelocity[0], angularVelocity[1], angularVelocity[2]])
+        magnet1_state = -1 if self.magnet1State == 0 else 1
+        magnet2_state = -1 if self.magnet2State == 0 else 1
+        magnet1_detect = -1 if self.magnet1_detect == 0 else 1
+        magnet2_detect = -1 if self.magnet2_detect == 0 else 1
 
+        next_state = np.array([action['continuous'][0], magnet1_state, magnet2_state,  # Use the continuous action as the first state variable
+                               magnet1_detect, magnet2_detect,
+                               self.robot_orien[0], self.robot_orien[1],
+                               self.robot_orien[2], y_distance, z_distance,
+                            #    linearVelocity[0], linearVelocity[1], linearVelocity[2],
+                            #    angularVelocity[0], angularVelocity[1], angularVelocity[2],
+                               ])
+        print("next_state: ", next_state)
+        
+        # print("magnet1_state: ", magnet1_state, 
+        #       "magnet2_state: ", magnet2_state,
+        #       "magnet1_detect: ", magnet1_detect,
+        #       "magnet2_detect: ", magnet2_detect)
+
+        # print(round(self.robot_orien[0], 3), round(self.robot_orien[1], 3), round(self.robot_orien[2], 3))
         # Calculate reward
         reward = self.compute_reward(next_state)
 
         # Check if the episode is done
-        done = abs(self.robot_pos[2]) < 0.55  # Done if the ball goes out of bounds
+        done = (
+            abs(self.robot_pos[2]) < 0.55
+            or abs(self.robot_pos[2]) > 0.785
+            or abs(self.robot_pos[1]) < -0.5
+            or abs(self.robot_pos[1]) >  1.5
+        )  # Done if the robot goes out of bounds
+        self.terminated = done
         terminations = np.array([done])  # Termination condition
-        print("terminations: ", terminations)
+        # print("terminations: ", terminations)
         truncations = np.array([False])  # Set to True if you have specific truncation logic
         infos = {}  # You can add any additional information here
 
@@ -271,15 +363,36 @@ class CoppeliaSimEnv(gym.Env):
         # z_diff = target_z - self.m2_position[2]
         # reward = - (y_diff ** 2 + z_diff ** 2)  # Reward is negative distance from target position
 
-        Target_Distance = 0.1
-        y_diff = Target_Distance - self.robot_pos[1]
+        Target_Distance = 1.35
+        target_diff = Target_Distance - self.robot_pos[1]
 
-        reward = - (y_diff ** 2)  # Reward is negative distance from target position
+        terminate_rew = -0 if self.terminated else 0.0
 
+        if self.robot_state == 0:
+            attach_reward = self.calculate_attach_point(self.m2_position, self.m1_position) * 10
+            attach_reward += 20.0 if self.magnet2_detect and self.m2_position[1] > self.m1_position[1] else 0.0
+            attach_reward -= 20.0 if self.magnet2_detect and self.m2_position[1] < self.m1_position[1] else 0.0
+        if self.robot_state == 1:
+            attach_reward = self.calculate_attach_point(self.m1_position, self.m2_position) * 10
+            attach_reward += 20.0 if self.magnet1_detect and self.m1_position[1] > self.m2_position[1] else 0.0
+            attach_reward -= 20.0 if self.magnet1_detect and self.m1_position[1] < self.m2_position[1] else 0.0
 
+        reward = - (target_diff ** 2)  # Reward is negative distance from target position
+        # print(f"Reward: {round(reward, 3)}, Termination Reward: {terminate_rew}, Attach Reward: {round(attach_reward, 3)}")
+        return attach_reward #+ reward + terminate_rew  # Combine rewards
+
+    def calculate_attach_point(self, magnet_position, fixate_magnet_position):
+        # Reaching target position Reward for magnet 2
+        target_fw = 0.22
+        target_z = 0.756
+        y_diff = (fixate_magnet_position[1] + target_fw) - magnet_position[1]
+        z_diff = target_z - magnet_position[2]
+        # print(f"fixate_magnet_position[1]: {round(fixate_magnet_position[1], 3)}, y_diff: {round(y_diff, 3)}, z_diff: {round(z_diff, 3)}")
+        # print(f"fixate_magnet_position[1]: {fixate_magnet_position[1]}, z_diff: {z_diff}")
+        reward = - (y_diff ** 2 + z_diff ** 2)  # Reward is negative distance from target position
         return reward
 
-    def read_magenet_sensor(self):
+    def read_magnet_sensor(self):
         # Read proximity sensor data
         res, dist, _, _, _ = self.sim.readProximitySensor(self.ir_sensor_handle)
         if res > 0:
@@ -428,7 +541,7 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     next_obs = envs.reset(seed=args.seed)
-    print("next_obs: ", next_obs)
+    # print("next_obs: ", next_obs)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
 
@@ -460,11 +573,14 @@ if __name__ == "__main__":
             
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminations, truncations, infos = envs.step(action_numpy)
-            # if terminations is True:
-            #     print("Terminations: ", terminations)
+            if terminations[0]:
+                print("Terminations: ", terminations)
+                next_obs = envs.reset(seed=args.seed)
+                print("next_obs after reset: ", next_obs)
             next_done = np.logical_or(terminations, truncations).astype(bool)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.tensor(next_done, dtype=torch.bool).to(device)
+            next_obs = torch.Tensor(next_obs).to(device)
+            next_done = torch.tensor(next_done, dtype=torch.bool).to(device)
 
             if "final_info" in infos:
                 for info in infos["final_info"]:
@@ -480,7 +596,7 @@ if __name__ == "__main__":
             lastgaelam = 0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
-                    nextnonterminal = 1.0 - next_done
+                    nextnonterminal = 1.0 - next_done.float()
                     nextvalues = next_value
                 else:
                     nextnonterminal = 1.0 - dones[t + 1]
